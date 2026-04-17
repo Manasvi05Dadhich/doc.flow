@@ -4,6 +4,7 @@ from app.api.actions import router as actions_router
 from app.api.jobs import router as jobs_router
 from app.api.progress import router as progress_router
 from app.api.upload import router as upload_router
+from app.core.database import init_db
 from app.core.config import get_settings
 
 
@@ -15,6 +16,11 @@ app.include_router(upload_router, prefix=settings.api_prefix)
 app.include_router(jobs_router, prefix=settings.api_prefix)
 app.include_router(progress_router, prefix=settings.api_prefix)
 app.include_router(actions_router, prefix=settings.api_prefix)
+
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
 
 
 @app.get("/health")
