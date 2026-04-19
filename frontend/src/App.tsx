@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, ReactNode } from "react";
+import { JobDetail, type JobDetailData } from "./components/JobDetail";
+import { useJobProgress } from "./hooks/useJobProgress";
 
 type Screen = "upload" | "dashboard" | "detail" | "export";
 type Status = "Processing" | "Completed" | "Failed" | "Queued";
@@ -8,7 +10,7 @@ type ExportType = "json" | "csv";
 type UploadFile = {
   id: number;
   name: string;
-  size: string;
+  size: number;
   type: "pdf" | "doc" | "txt";
   progress: number;
 };
@@ -20,35 +22,40 @@ type DocumentRow = {
   type: string;
   size: string;
   status: Status;
-  openable?: boolean;
 };
 
-type Step = {
-  name: string;
-  time: string;
-  state: "done" | "active" | "idle";
+type JobListApiItem = {
+  id: string;
+  status: string;
+  progress: number;
+  current_stage: string | null;
+  retry_count: number;
+  created_at: string;
+  document: {
+    id: string;
+    filename: string;
+    file_type: string;
+    file_size: number;
+  } | null;
 };
-
-const detailSteps: Step[] = [
-  { name: "Document received", time: "Waiting for job events", state: "idle" },
-  { name: "Parsing started", time: "Waiting for job events", state: "idle" },
-  { name: "Parsing completed", time: "Waiting for job events", state: "idle" },
-  { name: "Extraction started", time: "Waiting for job events", state: "idle" },
-  { name: "Extraction completed", time: "Pending", state: "idle" },
-  { name: "Result stored", time: "Pending", state: "idle" },
-  { name: "Job completed", time: "Pending", state: "idle" },
-];
 
 function App() {
-  const [screen, setScreen] = useState<Screen>("dashboard");
+  const [screen, setScreen] = useState<Screen>("upload");
   const [selectedFilter, setSelectedFilter] = useState<"All" | Status>("All");
   const [selectedExport, setSelectedExport] = useState<ExportType>("json");
   const [uploadFiles, setUploadFiles] = useState<UploadFile[]>([]);
-  const [documents] = useState<DocumentRow[]>([]);
+  const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [search, setSearch] = useState("");
-  const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("");
-  const [summary, setSummary] = useState("");
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<JobDetailData | null>(null);
+  const [sortKey, setSortKey] = useState<"uploaded_at" | "filename" | "status" | "size" | "type">("uploaded_at");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { progress, status, message } = useJobProgress(activeJobId);
 
   const stats = useMemo(
     () => ({
@@ -60,16 +67,168 @@ function App() {
     [documents],
   );
 
-  const visibleDocuments = useMemo(() => {
-    return documents.filter((doc) => {
-      const matchesFilter = selectedFilter === "All" || doc.status === selectedFilter;
-      const matchesSearch = doc.name.toLowerCase().includes(search.toLowerCase());
-      return matchesFilter && matchesSearch;
+  const loadJobs = async (signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (selectedFilter !== "All") {
+      params.set("status", selectedFilter.toLowerCase());
+    }
+    if (search.trim()) {
+      params.set("search", search.trim());
+    }
+    params.set("sort", sortKey);
+
+    const response = await fetch(`/api/jobs?${params.toString()}`, { signal });
+    if (!response.ok) {
+      throw new Error("Failed to load jobs");
+    }
+
+    const data = (await response.json()) as JobListApiItem[];
+    setDocuments(data.map(mapJobToDocumentRow));
+    setDashboardError(null);
+  };
+
+  const loadJobDetail = async (jobId: string, signal?: AbortSignal) => {
+    const response = await fetch(`/api/jobs/${jobId}`, { signal });
+    if (!response.ok) {
+      throw new Error("Failed to load job detail");
+    }
+
+    const detail = (await response.json()) as JobDetailData;
+    setSelectedJob(detail);
+    setDetailError(null);
+    return detail;
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void loadJobs(controller.signal).catch((error) => {
+      if (!controller.signal.aborted) {
+        setDashboardError(error instanceof Error ? error.message : "Failed to load jobs");
+      }
     });
-  }, [documents, search, selectedFilter]);
+
+    return () => controller.abort();
+  }, [search, selectedFilter, sortKey]);
+
+  useEffect(() => {
+    if (!activeJobId) {
+      setSelectedJob(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setDetailLoading(true);
+
+    void loadJobDetail(activeJobId, controller.signal)
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setDetailError(error instanceof Error ? error.message : "Failed to load job detail");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setDetailLoading(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [activeJobId]);
+
+  useEffect(() => {
+    if (!activeJobId) {
+      return;
+    }
+    setUploadFiles((current) => current.map((file) => ({ ...file, progress })));
+  }, [activeJobId, progress]);
+
+  useEffect(() => {
+    if (!activeJobId) {
+      return;
+    }
+    if (status === "job_completed" || status === "job_failed") {
+      setScreen("detail");
+      void loadJobs().catch(() => undefined);
+      void loadJobDetail(activeJobId).catch(() => undefined);
+    }
+  }, [activeJobId, status]);
 
   const removeFile = (id: number) => {
     setUploadFiles((current) => current.filter((file) => file.id !== id));
+  };
+
+  const onBrowseClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const onSelectFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "txt";
+    const type: UploadFile["type"] = extension === "pdf" ? "pdf" : extension === "docx" ? "doc" : "txt";
+
+    setUploadFiles([
+      {
+        id: Date.now(),
+        name: file.name,
+        size: file.size,
+        type,
+        progress: 0,
+      },
+    ]);
+    setUploadError(null);
+  };
+
+  const uploadSelectedFile = async () => {
+    const selected = fileInputRef.current?.files?.[0];
+    if (!selected) {
+      setUploadError("Choose a file before uploading.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", selected);
+
+    try {
+      setIsUploading(true);
+      setUploadError(null);
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Upload failed");
+      }
+
+      const data = (await response.json()) as { job_id: string };
+      setActiveJobId(data.job_id);
+      setUploadFiles((current) => current.map((file) => ({ ...file, progress: 5 })));
+      setScreen("dashboard");
+      await loadJobs();
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const openJob = (jobId: string) => {
+    setActiveJobId(jobId);
+    setScreen("detail");
+  };
+
+  const refreshActiveJob = async () => {
+    if (!activeJobId) {
+      return;
+    }
+    await loadJobDetail(activeJobId);
+    await loadJobs();
   };
 
   return (
@@ -97,9 +256,7 @@ function App() {
           <rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
           <rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
         </NavButton>
-
         <div className="nav-section">Workspace</div>
-
         <NavButton active={screen === "detail"} onClick={() => setScreen("detail")} label="Doc Detail">
           <path d="M3 2h7l4 4v8a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
           <path d="M10 2v4h4M5 9h6M5 12h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
@@ -121,13 +278,14 @@ function App() {
           <section className="screen">
             <div className="topbar">
               <span className="topbar-title">Upload Documents</span>
-              <span className="topbar-meta">PDF · DOCX · TXT · up to 1 GB</span>
+              <span className="topbar-meta">PDF · DOCX · TXT · up to 10 MB</span>
             </div>
             <div className="screen-centered">
               <div className="upload-card">
                 <h2>Upload Documents</h2>
-                <p>Drop files below or browse. Jobs are processed asynchronously in the background.</p>
-                <button className="drop-zone" type="button">
+                <p>Choose a file and start a real background job. Progress comes from Redis pub/sub over SSE.</p>
+                <input ref={fileInputRef} className="hidden-input" type="file" accept=".pdf,.docx,.txt" onChange={onSelectFile} />
+                <button className="drop-zone" type="button" onClick={onBrowseClick}>
                   <div className="drop-icon">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                       <path d="M12 4v12M8 8l4-4 4 4" stroke="#4FA8E8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -141,7 +299,7 @@ function App() {
                   {uploadFiles.length === 0 ? (
                     <div className="empty-state">
                       <div className="empty-state-title">No files selected</div>
-                      <div className="empty-state-copy">Hook your uploader here when the backend is ready.</div>
+                      <div className="empty-state-copy">Choose a file to create a processing job.</div>
                     </div>
                   ) : (
                     uploadFiles.map((file) => (
@@ -149,7 +307,7 @@ function App() {
                         <div className={`file-icon ${file.type}`}>{file.type.toUpperCase()}</div>
                         <div className="file-meta">
                           <div className="file-name">{file.name}</div>
-                          <div className="file-size">{file.size}</div>
+                          <div className="file-size">{formatSize(file.size)}</div>
                           <div className="file-progress">
                             <div className="file-progress-bar" style={{ width: `${file.progress}%` }} />
                           </div>
@@ -161,12 +319,28 @@ function App() {
                     ))
                   )}
                 </div>
+                {activeJobId && (
+                  <div className="upload-status-card">
+                    <div className="upload-status-row">
+                      <span className="chip">Job {activeJobId.slice(0, 8)}</span>
+                      <span className="upload-status-text">{status.replaceAll("_", " ")}</span>
+                    </div>
+                    <div className="progress-bar-track">
+                      <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+                    </div>
+                    <div className="progress-label">
+                      <span>{message || "Waiting for worker events"}</span>
+                      <span>{progress}%</span>
+                    </div>
+                  </div>
+                )}
+                {uploadError && <div className="error-banner">{uploadError}</div>}
                 <div className="upload-actions">
-                  <button className="btn-ghost" type="button">
-                    Cancel
+                  <button className="btn-ghost" type="button" onClick={() => setUploadFiles([])}>
+                    Clear
                   </button>
-                  <button className="btn-primary" type="button" onClick={() => setScreen("dashboard")}>
-                    Upload
+                  <button className="btn-primary" type="button" onClick={uploadSelectedFile} disabled={isUploading || uploadFiles.length === 0}>
+                    {isUploading ? "Uploading..." : "Upload"}
                   </button>
                 </div>
               </div>
@@ -179,10 +353,6 @@ function App() {
             <div className="topbar">
               <span className="topbar-title">All Documents</span>
               <button className="upload-btn-glass" type="button" onClick={() => setScreen("upload")}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 2v8M5 5l3-3 3 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M2 12v1a1 1 0 001 1h10a1 1 0 001-1v-1" stroke="white" strokeWidth="1.6" strokeLinecap="round" />
-                </svg>
                 Upload
               </button>
             </div>
@@ -199,54 +369,33 @@ function App() {
                     <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
                     <path d="M10.5 10.5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
-                  <input
-                    type="text"
-                    placeholder="Search documents…"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
+                  <input type="text" placeholder="Search documents..." value={search} onChange={(event) => setSearch(event.target.value)} />
                 </div>
-                {(["All", "Processing", "Completed", "Failed"] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    className={`filter-btn ${selectedFilter === filter ? "active-filter" : ""}`}
-                    type="button"
-                    onClick={() => setSelectedFilter(filter)}
-                  >
-                    {filter}
-                  </button>
-                ))}
-                <button className="filter-btn" type="button">
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                    <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                  Sort
-                </button>
+                <select className="filter-select" value={selectedFilter} onChange={(event) => setSelectedFilter(event.target.value as "All" | Status)}>
+                  <option value="All">All</option>
+                  <option value="Processing">Processing</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Failed">Failed</option>
+                  <option value="Queued">Queued</option>
+                </select>
               </div>
+              {dashboardError && <div className="error-banner">{dashboardError}</div>}
               <div className="doc-table">
                 <div className="table-header">
-                  <div className="th">Document</div>
-                  <div className="th">Type</div>
-                  <div className="th">Size</div>
-                  <div className="th">Status</div>
+                  <button className="th th-button" type="button" onClick={() => setSortKey("filename")}>Document</button>
+                  <button className="th th-button" type="button" onClick={() => setSortKey("type")}>Type</button>
+                  <button className="th th-button" type="button" onClick={() => setSortKey("size")}>Size</button>
+                  <button className="th th-button" type="button" onClick={() => setSortKey("status")}>Status</button>
                   <div className="th">Actions</div>
                 </div>
-                {visibleDocuments.length === 0 ? (
+                {documents.length === 0 ? (
                   <div className="table-empty">
-                    <div className="empty-state-title">No documents yet</div>
-                    <div className="empty-state-copy">Uploaded jobs will appear here once the API is connected.</div>
+                    <div className="empty-state-title">No documents found</div>
+                    <div className="empty-state-copy">Upload a file or adjust your filters to see jobs here.</div>
                   </div>
                 ) : (
-                  visibleDocuments.map((doc) => (
-                    <div
-                      className="doc-row"
-                      key={doc.id}
-                      onClick={() => {
-                        if (doc.openable) {
-                          setScreen("detail");
-                        }
-                      }}
-                    >
+                  documents.map((doc) => (
+                    <div className="doc-row" key={doc.id} onClick={() => openJob(doc.id)}>
                       <div>
                         <div className="doc-name">
                           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -262,11 +411,8 @@ function App() {
                         <span className={`badge ${doc.status.toLowerCase()}`}>{doc.status}</span>
                       </div>
                       <div className="row-action" onClick={(event) => event.stopPropagation()}>
-                        <button className={`action-btn ${doc.status === "Failed" ? "retry" : ""}`} type="button" onClick={() => setScreen("detail")}>
-                          <svg viewBox="0 0 16 16" fill="none">
-                            <circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.4" />
-                            <path d="M1.5 8S4 3 8 3s6.5 5 6.5 5-2.5 5-6.5 5S1.5 8 1.5 8z" stroke="currentColor" strokeWidth="1.4" />
-                          </svg>
+                        <button className="action-btn" type="button" onClick={() => openJob(doc.id)}>
+                          Open
                         </button>
                       </div>
                     </div>
@@ -278,106 +424,17 @@ function App() {
         )}
 
         {screen === "detail" && (
-          <section className="screen">
-            <div className="topbar">
-              <div className="topbar-group">
-                <button className="back-btn" type="button" onClick={() => setScreen("dashboard")}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  Back
-                </button>
-                <span className="divider">|</span>
-                <span className="topbar-title">Document Detail</span>
-                <span className="badge queued">Awaiting Data</span>
-              </div>
-              <div className="topbar-actions">
-                <button className="filter-btn" type="button" onClick={() => setScreen("export")}>
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                    <path d="M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                    <path d="M8 2v8M5 9l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  Export
-                </button>
-                <button className="btn-primary btn-inline" type="button">
-                  Finalize
-                </button>
-              </div>
-            </div>
-            <div className="screen-pad">
-              <div className="finalize-bar">
-                <div className="job-meta">
-                  <strong>Job ID:</strong>
-                  <span className="job-id"> pending</span>
-                  <span className="meta-separator">·</span>
-                  <span className="job-submeta">Connect selected document data here</span>
-                </div>
-                <div className="job-progress-meta">
-                  <span className="chip">Stage - / 7</span>
-                  <span className="job-percent">0% complete</span>
-                </div>
-              </div>
-              <div className="detail-grid">
-                <div className="detail-column">
-                  <div className="card">
-                    <div className="card-title">Extracted Fields</div>
-                    <div className="extracted-fields">
-                      <Field label="Title">
-                        <input className="field-value" type="text" placeholder="Title will appear here" value={title} onChange={(event) => setTitle(event.target.value)} />
-                      </Field>
-                      <Field label="Category">
-                        <input className="field-value" type="text" placeholder="Category will appear here" value={category} onChange={(event) => setCategory(event.target.value)} />
-                      </Field>
-                      <Field label="Summary">
-                        <textarea className="field-value" rows={3} placeholder="Summary will appear here" value={summary} onChange={(event) => setSummary(event.target.value)} />
-                      </Field>
-                      <Field label="Keywords">
-                        <div className="empty-state inline-empty">
-                          <div className="empty-state-copy">No extracted keywords yet.</div>
-                        </div>
-                      </Field>
-                    </div>
-                  </div>
-                </div>
-                <div className="detail-column">
-                  <div className="card">
-                    <div className="card-title">Processing Progress</div>
-                    <div className="overall-progress">
-                      <div className="progress-bar-track">
-                        <div className="progress-bar-fill" style={{ width: "0%" }} />
-                      </div>
-                      <div className="progress-label">
-                        <span>Waiting for job start</span>
-                        <span>0%</span>
-                      </div>
-                    </div>
-                    <div className="progress-steps">
-                      {detailSteps.map((step) => (
-                        <div className="step-item" key={step.name}>
-                          <div className={`step-dot ${step.state}`}>
-                            {step.state === "done" && (
-                              <svg viewBox="0 0 12 12" fill="none">
-                                <path d="M2.5 6L5 8.5 9.5 4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            )}
-                            {step.state === "active" && (
-                              <svg viewBox="0 0 12 12" fill="none">
-                                <circle cx="6" cy="6" r="2" fill="white" />
-                              </svg>
-                            )}
-                          </div>
-                          <div>
-                            <div className="step-name">{step.name}</div>
-                            <div className={`step-time ${step.state === "idle" ? "pending" : ""}`}>{step.time}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
+          <JobDetail
+            job={selectedJob}
+            loading={detailLoading}
+            error={detailError}
+            progress={selectedJob?.status === "completed" ? 100 : progress}
+            statusEvent={status}
+            message={message}
+            onBack={() => setScreen("dashboard")}
+            onExport={() => setScreen("export")}
+            onRefresh={refreshActiveJob}
+          />
         )}
 
         {screen === "export" && (
@@ -397,18 +454,18 @@ function App() {
             <div className="export-shell">
               <div className="export-copy">
                 <div className="export-heading">Choose export format</div>
-                <div className="export-subheading">Select a format for your finalized document</div>
+                <div className="export-subheading">Pick a finalized record export format.</div>
               </div>
               <div className="export-grid">
                 <button className={`export-option ${selectedExport === "json" ? "selected" : ""}`} type="button" onClick={() => setSelectedExport("json")}>
                   <div className="export-icon">{"{ }"}</div>
                   <div className="export-name">JSON</div>
-                  <div className="export-desc">Structured data, ideal for APIs and integrations</div>
+                  <div className="export-desc">Structured data for APIs and integrations.</div>
                 </button>
                 <button className={`export-option ${selectedExport === "csv" ? "selected" : ""}`} type="button" onClick={() => setSelectedExport("csv")}>
                   <div className="export-icon export-csv-icon">CSV</div>
                   <div className="export-name">CSV</div>
-                  <div className="export-desc">Spreadsheet-compatible, rows and columns</div>
+                  <div className="export-desc">Spreadsheet-friendly tabular export.</div>
                 </button>
               </div>
               <div className="card preview-card">
@@ -416,19 +473,17 @@ function App() {
                 <div className="preview-box">
                   <pre>
                     {selectedExport === "json"
-                      ? `{
-  "id": "",
-  "filename": "",
-  "status": "",
-  "extracted": {
-    "title": "",
-    "category": "",
-    "keywords": [],
-    "summary": ""
-  },
-  "exported_at": ""
-}`
-                      : `id,filename,status,title,category,keywords,summary,exported_at`}
+                      ? JSON.stringify(
+                          {
+                            job_id: selectedJob?.id ?? "",
+                            document: selectedJob?.document?.filename ?? "",
+                            reviewed_json: selectedJob?.result?.reviewed_json ?? selectedJob?.result?.raw_output ?? {},
+                            is_finalized: selectedJob?.result?.is_finalized ?? false,
+                          },
+                          null,
+                          2,
+                        )
+                      : `job_id,filename,is_finalized,title,category,summary\n${selectedJob?.id ?? ""},${selectedJob?.document?.filename ?? ""},${selectedJob?.result?.is_finalized ?? false},${stringifyCsvField(getReviewedValue(selectedJob, "title"))},${stringifyCsvField(getReviewedValue(selectedJob, "category"))},${stringifyCsvField(getReviewedValue(selectedJob, "summary"))}`}
                   </pre>
                 </div>
               </div>
@@ -436,9 +491,12 @@ function App() {
                 <button className="btn-ghost btn-inline" type="button" onClick={() => setScreen("detail")}>
                   Cancel
                 </button>
-                <button className="btn-primary btn-inline" type="button">
+                <a
+                  className={`btn-primary btn-inline export-link ${!activeJobId ? "disabled-link" : ""}`}
+                  href={activeJobId ? `/api/jobs/${activeJobId}/export?format=${selectedExport}` : undefined}
+                >
                   Download {selectedExport.toUpperCase()}
-                </button>
+                </a>
               </div>
             </div>
           </section>
@@ -478,13 +536,40 @@ function StatCard({ label, value, tone }: { label: string; value: number; tone?:
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="field-row">
-      <div className="field-label">{label}</div>
-      {children}
-    </div>
-  );
+function mapJobToDocumentRow(job: JobListApiItem): DocumentRow {
+  return {
+    id: job.id,
+    name: job.document?.filename ?? "Unknown file",
+    uploadedAt: new Date(job.created_at).toLocaleString(),
+    type: (job.document?.file_type ?? "unknown").toUpperCase(),
+    size: job.document ? formatSize(job.document.file_size) : "0 B",
+    status: normalizeStatus(job.status),
+  };
+}
+
+function normalizeStatus(status: string): Status {
+  const lower = status.toLowerCase();
+  if (lower === "completed") return "Completed";
+  if (lower === "failed") return "Failed";
+  if (lower === "processing") return "Processing";
+  return "Queued";
+}
+
+function formatSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+function getReviewedValue(job: JobDetailData | null, key: "title" | "category" | "summary") {
+  const reviewed = job?.result?.reviewed_json ?? {};
+  const raw = job?.result?.raw_output ?? {};
+  const value = reviewed[key] ?? raw[key];
+  return typeof value === "string" ? value : "";
+}
+
+function stringifyCsvField(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 export default App;

@@ -36,11 +36,17 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
 
     extension = _file_extension(file)
     if extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=415, detail="Unsupported file type")
+        raise HTTPException(status_code=415, detail="Unsupported Media Type. Allowed types: PDF, DOCX, TXT.")
 
     size_in_bytes = _file_size(file)
+    if size_in_bytes == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
     if size_in_bytes > settings.max_file_size_mb * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large")
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is {settings.max_file_size_mb} MB.",
+        )
 
     storage_path = await storage.save(file)
     document = service.create_document(

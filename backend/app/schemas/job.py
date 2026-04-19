@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.schemas.document import DocumentRead
+from app.schemas.result import ResultRead
 
 
 class JobRead(BaseModel):
@@ -13,6 +14,7 @@ class JobRead(BaseModel):
     current_stage: str | None
     error_message: str | None
     celery_task_id: str | None
+    retry_count: int
     created_at: datetime
     updated_at: datetime
 
@@ -20,6 +22,11 @@ class JobRead(BaseModel):
 
 
 class JobDetail(JobRead):
+    document: DocumentRead | None = None
+    result: ResultRead | None = None
+
+
+class JobListItem(JobRead):
     document: DocumentRead | None = None
 
 

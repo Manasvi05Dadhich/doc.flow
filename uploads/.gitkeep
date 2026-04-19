@@ -1,1 +1,6 @@
+docker compose up --build -d
+curl -F "file=@C:\path\to\sample.pdf" http://localhost:8000/api/upload
+docker compose logs worker
+docker compose exec db psql -U postgres -d docflow -c "select id, filename from documents;"
+docker compose exec db psql -U postgres -d docflow -c "select id, status, celery_task_id from jobs;"
 

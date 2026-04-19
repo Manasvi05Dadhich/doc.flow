@@ -10,6 +10,7 @@
 body{font-family:"DM Sans",sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 button,input,textarea{font:inherit}
 button{border:none;background:none}
+.hidden-input{display:none}
 .app{display:flex;height:100vh;overflow:hidden}
 .sidebar{width:220px;min-width:220px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:24px 16px;gap:4px}
 .logo{display:flex;align-items:center;gap:10px;padding:0 8px 24px}
@@ -60,10 +61,16 @@ button{border:none;background:none}
 .file-progress-bar{height:100%;border-radius:2px;background:linear-gradient(90deg,#7ecbf5,#4FA8E8);transition:width 1.5s ease}
 .file-remove{color:var(--muted);cursor:pointer;font-size:20px;line-height:1;padding:4px}
 .upload-actions{display:flex;gap:10px}
+.upload-status-card{display:flex;flex-direction:column;gap:10px;padding:14px 16px;margin-bottom:18px;border-radius:var(--radius-sm);background:var(--surface2);border:1px solid var(--border)}
+.upload-status-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.upload-status-text{text-transform:capitalize;font-size:13px;color:var(--blue-dark);font-weight:500}
+.error-banner{padding:10px 14px;margin-bottom:16px;border-radius:var(--radius-sm);background:#fee6e6;border:1px solid #fca5a5;color:#b91c1c;font-size:13px}
+.success-banner{padding:10px 14px;margin-bottom:16px;border-radius:var(--radius-sm);background:#e6f7ee;border:1px solid #86d3aa;color:#1a7f4b;font-size:13px}
 .btn-ghost,.btn-primary{padding:12px;border-radius:50px;font-size:14px;cursor:pointer;transition:all .2s}
 .btn-ghost{flex:1;border:1px solid var(--border2);color:var(--muted)}
 .btn-ghost:hover{background:var(--surface2);color:var(--text)}
 .btn-primary{flex:1.5;background:linear-gradient(135deg,#a8d8f8 0%,#4FA8E8 60%,#3a90d0 100%);color:white;font-weight:500;box-shadow:0 0 0 2px rgba(255,255,255,.4) inset,0 4px 16px rgba(79,168,232,.3);letter-spacing:-.1px}
+.btn-primary:disabled{cursor:not-allowed;opacity:.65;transform:none;box-shadow:0 0 0 2px rgba(255,255,255,.2) inset,0 2px 8px rgba(79,168,232,.18)}
 .btn-inline{flex:none;padding:10px 22px}
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}
 .stat-card,.card,.doc-table,.finalize-bar{background:var(--surface);border-radius:var(--radius-sm);border:1px solid var(--border);box-shadow:var(--shadow)}
@@ -80,9 +87,14 @@ button{border:none;background:none}
 .filter-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:50px;border:1px solid var(--border2);background:var(--surface);font-size:13px;cursor:pointer;color:var(--muted);transition:all .15s}
 .filter-btn:hover{border-color:var(--blue);color:var(--blue-dark)}
 .filter-btn.active-filter{border-color:var(--blue);background:var(--blue-light);color:var(--blue-dark);font-weight:500}
+.retry-inline{color:#b91c1c;border-color:#fca5a5}
+.filter-select{padding:9px 16px;border-radius:50px;border:1px solid var(--border2);background:var(--surface);font-size:13px;color:var(--muted);outline:none}
+.filter-select:focus{border-color:var(--blue);color:var(--blue-dark)}
 .table-header,.doc-row{display:grid;grid-template-columns:2.5fr 1fr 1fr 1.2fr 90px;align-items:center}
 .table-header{padding:12px 20px;border-bottom:1px solid var(--border)}
 .th{font-size:12px;font-weight:500;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.th-button{text-align:left;cursor:pointer}
+.th-button:hover{color:var(--blue-dark)}
 .doc-row{padding:14px 20px;border-bottom:1px solid var(--border);transition:background .12s;cursor:pointer}
 .doc-row:last-child{border-bottom:none}
 .doc-row:hover{background:var(--surface2)}
@@ -102,7 +114,7 @@ button{border:none;background:none}
 .badge.failed::before{background:#ef4444}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .row-action{display:flex;align-items:center;gap:6px}
-.action-btn{width:30px;height:30px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:all .15s}
+.action-btn{min-width:30px;height:30px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:all .15s;padding:0 10px;font-size:12px}
 .action-btn:hover{background:var(--blue-light);border-color:var(--blue);color:var(--blue-dark)}
 .action-btn svg{width:13px;height:13px}
 .action-btn.retry{color:#b91c1c;border-color:#fca5a5}
@@ -128,6 +140,8 @@ button{border:none;background:none}
 .field-label{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.04em;text-transform:uppercase}
 .field-value{font-size:14px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border2);background:var(--surface2);color:var(--text);resize:none;outline:none;transition:border .15s;width:100%}
 .field-value:focus{border-color:var(--blue);background:white}
+.field-value[readonly]{background:#f2f4f7;color:var(--muted);cursor:not-allowed}
+.detail-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
 .keywords-row{display:flex;flex-wrap:wrap;gap:6px}
 .keyword{padding:4px 10px;border-radius:50px;background:var(--blue-light);color:var(--blue-dark);font-size:12px;font-weight:500}
 .finalize-bar{padding:16px 20px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:12px}
@@ -152,7 +166,10 @@ button{border:none;background:none}
 .preview-card{margin-bottom:20px}
 .preview-box{background:#1e2228;border-radius:var(--radius-sm);padding:20px 22px;font-family:"DM Mono",monospace;font-size:12px;color:#a8d8f8;line-height:1.7;overflow:auto;max-height:220px}
 .preview-box pre{white-space:pre-wrap}
+.detail-preview-box{max-height:320px}
 .export-actions{display:flex;gap:10px}
+.export-link{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.disabled-link{pointer-events:none;opacity:.65}
 .avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#a8d8f8,#4FA8E8);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:white;flex-shrink:0}
 @media (max-width:1100px){.stats-row,.detail-grid{grid-template-columns:1fr 1fr}}
 @media (max-width:900px){

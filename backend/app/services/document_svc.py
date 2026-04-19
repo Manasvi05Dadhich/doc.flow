@@ -1,4 +1,5 @@
 from fastapi import UploadFile
+from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.document import Document
@@ -47,8 +48,24 @@ class DocumentService:
         self.db.refresh(job)
         return job
 
-    def list_jobs(self) -> list[Job]:
-        return self.db.query(Job).options(joinedload(Job.document), joinedload(Job.result)).order_by(Job.created_at.desc()).all()
+    def list_jobs(self, *, status: str | None = None, search: str | None = None, sort: str = "uploaded_at") -> list[Job]:
+        query = self.db.query(Job).join(Document).options(joinedload(Job.document), joinedload(Job.result))
+
+        if status:
+            query = query.filter(Job.status == status)
+
+        if search:
+            query = query.filter(Document.filename.ilike(f"%{search}%"))
+
+        sort_mapping = {
+            "uploaded_at": Document.created_at,
+            "filename": Document.filename,
+            "status": Job.status,
+            "size": Document.file_size,
+            "type": Document.file_type,
+        }
+        sort_column = sort_mapping.get(sort, Document.created_at)
+        return query.order_by(desc(sort_column)).all()
 
     def get_job(self, job_id: str) -> Job | None:
         return self.db.query(Job).options(joinedload(Job.document), joinedload(Job.result)).filter(Job.id == job_id).first()

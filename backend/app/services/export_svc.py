@@ -2,50 +2,56 @@ import csv
 import io
 import json
 
+from fastapi.responses import Response
+
 from app.models.job import Job
 
 
 class ExportService:
     @staticmethod
-    def build_json(job: Job) -> str:
-        payload = {
-            "job_id": job.id,
-            "status": job.status,
-            "document": {
-                "id": job.document.id if job.document else None,
-                "filename": job.document.filename if job.document else None,
-                "file_type": job.document.file_type if job.document else None,
-                "file_size": job.document.file_size if job.document else None,
-            },
-            "result": {
-                "title": job.result.title if job.result else None,
-                "category": job.result.category if job.result else None,
-                "summary": job.result.summary if job.result else None,
-                "keywords": job.result.keywords if job.result else [],
-                "finalized": job.result.finalized if job.result else False,
-            },
-        }
-        return json.dumps(payload, indent=2)
+    def export_json(job: Job) -> Response:
+        data = ExportService._export_payload(job)
+        filename = ExportService._build_filename(job, "json")
+        return Response(
+            content=json.dumps(data, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @staticmethod
-    def build_csv(job: Job) -> str:
+    def export_csv(job: Job) -> Response:
+        data = ExportService._export_payload(job)
         buffer = io.StringIO()
-        writer = csv.DictWriter(
-            buffer,
-            fieldnames=["job_id", "document_id", "filename", "status", "title", "category", "summary", "keywords", "finalized"],
-        )
+        writer = csv.DictWriter(buffer, fieldnames=list(data.keys()))
         writer.writeheader()
-        writer.writerow(
-            {
-                "job_id": job.id,
-                "document_id": job.document.id if job.document else "",
-                "filename": job.document.filename if job.document else "",
-                "status": job.status,
-                "title": job.result.title if job.result else "",
-                "category": job.result.category if job.result else "",
-                "summary": job.result.summary if job.result else "",
-                "keywords": "|".join(job.result.keywords) if job.result else "",
-                "finalized": job.result.finalized if job.result else False,
-            }
+        writer.writerow({key: ExportService._flatten_value(value) for key, value in data.items()})
+
+        filename = ExportService._build_filename(job, "csv")
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
-        return buffer.getvalue()
+
+    @staticmethod
+    def _export_payload(job: Job) -> dict:
+        if job.result is None:
+            return {}
+
+        payload = job.result.reviewed_json or job.result.raw_output or {}
+        if isinstance(payload, dict):
+            return payload
+        return {}
+
+    @staticmethod
+    def _flatten_value(value: object) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _build_filename(job: Job, extension: str) -> str:
+        base_name = job.document.filename.rsplit(".", 1)[0] if job.document and job.document.filename else f"job-{job.id}"
+        return f"{base_name}-result.{extension}"

@@ -17,7 +17,10 @@ class Result(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     keywords: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     raw_output: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    reviewed_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     finalized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_finalized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
