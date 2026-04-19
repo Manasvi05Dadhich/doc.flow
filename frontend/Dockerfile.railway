@@ -8,7 +8,8 @@ RUN npm install
 COPY . /app
 RUN npm run build
 
-FROM caddy:2
+FROM nginx:1.27-alpine
 
-COPY Caddyfile.railway /etc/caddy/Caddyfile
-COPY --from=build /app/dist /srv
+RUN apk add --no-cache gettext
+COPY nginx.railway.conf /etc/nginx/templates/default.conf.template
+COPY --from=build /app/dist /usr/share/nginx/html
