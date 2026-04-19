@@ -323,7 +323,7 @@ function App() {
                   <div className="upload-status-card">
                     <div className="upload-status-row">
                       <span className="chip">Job {activeJobId.slice(0, 8)}</span>
-                      <span className="upload-status-text">{status.replaceAll("_", " ")}</span>
+                      <span className="upload-status-text">{status.split("_").join(" ")}</span>
                     </div>
                     <div className="progress-bar-track">
                       <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
@@ -569,7 +569,7 @@ function getReviewedValue(job: JobDetailData | null, key: "title" | "category" |
 }
 
 function stringifyCsvField(value: string) {
-  return `"${value.replaceAll('"', '""')}"`;
+  return `"${value.split('"').join('""')}"`;
 }
 
 export default App;
