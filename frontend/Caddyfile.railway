@@ -1,0 +1,13 @@
+:{$PORT}
+
+handle /api/* {
+  reverse_proxy {$BACKEND_UPSTREAM}
+}
+
+handle /health {
+  reverse_proxy {$BACKEND_UPSTREAM}
+}
+
+root * /srv
+try_files {path} /index.html
+file_server
