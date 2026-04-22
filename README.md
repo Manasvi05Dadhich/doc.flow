@@ -401,4 +401,4 @@ When `EventSource` reconnects after a network drop, the browser sends the `Last-
 
 ## AI tools used
 
-Claude was used during development to discuss system design tradeoffs, review architecture decisions, and draft boilerplate code patterns.
+Claude was used during development to discuss system design tradeoffs, review architecture decisions.
