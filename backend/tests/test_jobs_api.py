@@ -5,16 +5,11 @@ from fastapi.testclient import TestClient
 from app.core.database import get_db
 from app.main import app
 
-
 client = TestClient(app)
-
-
 def override_get_db():
     yield None
 
-
 app.dependency_overrides[get_db] = override_get_db
-
 
 def test_retry_endpoint_rejects_non_failed_jobs(monkeypatch):
     class FakeJobService:

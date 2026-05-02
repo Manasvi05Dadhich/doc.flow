@@ -10,6 +10,9 @@ from app.services.document_svc import DocumentService
 from app.services.storage import LocalStorageBackend
 from app.workers.tasks import process_document
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["upload"])
 
@@ -57,8 +60,15 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     )
     job = service.create_job(document.id)
 
-    task = process_document.delay(str(job.id))
-    service.set_task_id(job.id, task.id)
+    try:
+        task = process_document.delay(str(job.id))
+        service.set_task_id(job.id, task.id)
+    except Exception as exc:
+        logger.error("Failed to dispatch Celery task (Redis may be unreachable): %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Document saved but background processing is temporarily unavailable. Please try again later.",
+        )
 
     return UploadAcceptedResponse(
         job_id=job.id,
